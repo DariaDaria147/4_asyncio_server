@@ -1,61 +1,44 @@
+# ИСАДИЧЕВА ДАРЬЯ, ДПИ22-1
+
 import asyncio
 
-HOST = 'localhost'  # Хост для подключения
-PORT = 9095         # Порт для подключения
+# Конфигурация клиента: адрес сервера и порт для подключения
+SERVER_HOST = 'localhost'  # IP-адрес сервера, к которому подключается клиент
+SERVER_PORT = 9095         # Порт, на котором ожидает подключения сервер
 
-async def tcp_echo_client():
+
+# Асинхронная функция для клиентской логики
+async def send_message_to_server(client_message):
     """
-    Асинхронная функция для подключения к серверу и обмена сообщениями.
+    Устанавливает соединение с сервером, отправляет сообщение и обрабатывает ответ.
+    
+    :param client_message: Строка, которую клиент отправляет серверу
     """
-    reader = None
-    writer = None
+    # Устанавливаем соединение с сервером
+    server_reader, server_writer = await asyncio.open_connection(SERVER_HOST, SERVER_PORT)
 
-    loop = asyncio.get_running_loop()
+    # Отправляем сообщение серверу
+    print(f'Отправка сообщения серверу: {client_message!r}')
+    server_writer.write(client_message.encode())  # Кодируем строку в байты
+    await server_writer.drain()  # Убеждаемся, что данные полностью отправлены
 
-    try:
-        while True:
-            # Пытаемся установить соединение с сервером
-            try:
-                reader, writer = await asyncio.open_connection(HOST, PORT)
-                print(f"Подключено к серверу {HOST}:{PORT}")
-                break  # Если подключились, выходим из цикла подключения
-            except ConnectionRefusedError:
-                # Если не удалось подключиться, выводим сообщение и ждем 5 секунд
-                print(f"Не удалось подключиться к серверу {HOST}:{PORT}. Повтор через 5 секунд...")
-                await asyncio.sleep(5)
+    # Читаем ответ от сервера (не более 100 байт)
+    server_response = await server_reader.read(100)
+    print(f'Получен ответ от сервера: {server_response.decode()!r}')  # Декодируем байты в строку
 
-        while True:
-            # Читаем сообщение от пользователя в отдельном потоке, чтобы не блокировать цикл событий
-            message = await loop.run_in_executor(None, input, "Введите сообщение (или 'exit' для выхода): ")
-            if message.lower() == 'exit':
-                # Если введена команда 'exit', выходим из цикла
-                print("Отключение от сервера.")
-                break
+    # Закрываем соединение с сервером
+    print("Закрываем соединение с сервером.")
+    server_writer.close()  # Закрываем поток записи
+    await server_writer.wait_closed()  # Ждем полного закрытия соединения
 
-            # Отправляем сообщение серверу
-            writer.write(message.encode())
-            await writer.drain()  # Ждем, пока данные будут отправлены
 
-            # Ожидаем ответ от сервера
-            data = await reader.read(100)
-            if not data:
-                # Если данных нет, сервер закрыл соединение
-                print("Сервер закрыл соединение.")
-                break
-            print(f"Получено эхо: {data.decode()!r}")
+# Асинхронная функция для запуска клиентской части
+async def run_client():
+    """
+    Запускает клиентскую программу и отправляет сообщение серверу.
+    """
+    await send_message_to_server("Привет, asyncio!")  # Сообщение, которое клиент отправляет серверу
 
-    except KeyboardInterrupt:
-        # Обрабатываем прерывание по Ctrl+C
-        print("\nКлиент прерван пользователем (Ctrl+C)")
-    except ConnectionResetError:
-        # Обрабатываем случай, когда соединение было разорвано
-        print("Соединение было закрыто сервером.")
-    finally:
-        if writer is not None:
-            writer.close()  # Закрываем соединение
-            await writer.wait_closed()
-        print("Клиент завершил работу.")
 
-if __name__ == '__main__':
-    # Запускаем асинхронную функцию tcp_echo_client с помощью asyncio.run()
-    asyncio.run(tcp_echo_client())
+# Запускаем асинхронное выполнение клиентской программы
+asyncio.run(run_client())
