@@ -1,107 +1,52 @@
+# ИСАДИЧЕВА ДАРЬЯ, ДПИ22-1
+
 import asyncio
 
-HOST = 'localhost'  # Хост для прослушивания
-PORT = 9095         # Порт для прослушивания
+# Конфигурация сервера: IP-адрес и порт для подключения клиентов
+SERVER_HOST = 'localhost'  # Локальный адрес сервера
+SERVER_PORT = 9095         # Порт, на котором будет работать сервер
 
-connected_clients = set()  # Набор для хранения подключенных клиентов
-stop_server = False        # Флаг для остановки сервера
-
-async def handle_echo(reader, writer):
+# Асинхронная функция для обработки подключения клиента
+async def handle_client(client_reader, client_writer):
     """
-    Асинхронная функция для обработки подключений от клиентов.
+    Обрабатывает подключение клиента: принимает данные, отправляет их обратно и закрывает соединение.
+    
+    :param client_reader: Асинхронный поток для чтения данных от клиента
+    :param client_writer: Асинхронный поток для отправки данных клиенту
     """
-    global connected_clients
-    addr = writer.get_extra_info('peername')  # Получаем адрес клиента
-    print(f"Клиент подключился: {addr}")
-    connected_clients.add(writer)  # Добавляем клиента в набор подключенных клиентов
-    try:
-        while True:
-            data = await reader.read(100)  # Читаем данные от клиента
-            if not data:
-                # Если данные пустые, клиент отключился
-                print(f"Клиент отключился: {addr}")
-                break
-            message = data.decode()  # Декодируем сообщение
-            print(f"Получено {message!r} от {addr}")
+    # Читаем данные, переданные клиентом (максимальный размер — 100 байт)
+    client_data = await client_reader.read(100)
+    client_message = client_data.decode()  # Преобразуем байты в строку
+    client_address = client_writer.get_extra_info('peername')  # Получаем IP и порт клиента
 
-            # Отправляем сообщение обратно клиенту (эхо)
-            writer.write(data)
-            await writer.drain()  # Ждем, пока данные будут отправлены
+    # Выводим полученное сообщение и адрес клиента
+    print(f"Получено сообщение: {client_message!r} от клиента: {client_address!r}")
 
-            print(f"Отправлено: {message!r} обратно к {addr}")
+    # Отправляем сообщение обратно клиенту (реализуем эхо-сервер)
+    print(f"Отправляем обратно: {client_message!r}")
+    client_writer.write(client_data)  # Записываем данные в поток отправки
+    await client_writer.drain()       # Убеждаемся, что данные отправлены полностью
 
-    except ConnectionResetError:
-        # Обработка случая, когда клиент принудительно разорвал соединение
-        print(f"Клиент принудительно отключился: {addr}")
-    finally:
-        # Удаляем клиента из набора подключенных клиентов
-        connected_clients.discard(writer)
-        writer.close()  # Закрываем соединение
-        await writer.wait_closed()  # Ждем, пока соединение будет полностью закрыто
-        print(f"Соединение закрыто с {addr}")
+    # Закрываем соединение с клиентом
+    print(f"Закрываем соединение с клиентом: {client_address!r}")
+    client_writer.close()
+    await client_writer.wait_closed()  # Ждем полного закрытия соединения
 
-async def stop_server_when_no_clients(server):
+# Асинхронная функция для запуска сервера
+async def start_server():
     """
-    Асинхронная функция для остановки сервера, когда получена команда 'stop' и нет подключенных клиентов.
+    Запускает сервер и обрабатывает подключения клиентов.
     """
-    global stop_server
-    while True:
-        await asyncio.sleep(1)  # Ждем 1 секунду перед каждой проверкой
-        if stop_server and not connected_clients:
-            # Если команда 'stop' получена и нет подключенных клиентов
-            print("Нет подключенных клиентов, сервер останавливается...")
-            server.close()  # Останавливаем сервер
-            await server.wait_closed()  # Ждем, пока сервер полностью остановится
-            break
+    # Создаем сервер с обработчиком подключения handle_client
+    server = await asyncio.start_server(handle_client, SERVER_HOST, SERVER_PORT)
 
-async def read_server_commands(loop):
-    """
-    Асинхронная функция для чтения команд с серверной консоли.
-    """
-    global stop_server
-    while True:
-        # Читаем команду с консоли в отдельном потоке, чтобы не блокировать цикл событий
-        cmd = await loop.run_in_executor(None, input)
-        if cmd.strip() == 'stop':
-            print("Команда 'stop' получена. Остановка сервера после отключения всех клиентов.")
-            stop_server = True  # Устанавливаем флаг остановки сервера
-            break
+    # Получаем информацию об адресе и порте сервера
+    server_address = server.sockets[0].getsockname()
+    print(f"Сервер запущен и доступен по адресу: {server_address}")
 
-async def main():
-    """
-    Основная асинхронная функция для настройки и запуска сервера.
-    """
-    server = await asyncio.start_server(handle_echo, HOST, PORT)
+    # Контекстный менеджер для запуска сервера и ожидания новых подключений
+    async with server:
+        await server.serve_forever()
 
-    addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
-    print(f'Сервер запущен на {addrs}')
-
-    loop = asyncio.get_running_loop()
-
-    # Создаем задачи
-    server_task = loop.create_task(server.serve_forever())
-    command_task = loop.create_task(read_server_commands(loop))
-    stop_task = loop.create_task(stop_server_when_no_clients(server))
-
-    tasks = [server_task, command_task, stop_task]
-
-    try:
-        # Ждем завершения задач
-        await asyncio.gather(*tasks)
-    except asyncio.CancelledError:
-        # Здесь мы ловим CancelledError, который возникает при отмене задач
-        pass
-    except KeyboardInterrupt:
-        # Обрабатываем прерывание по Ctrl+C
-        print("Сервер прерван пользователем (Ctrl+C)")
-        server.close()
-        await server.wait_closed()
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-    finally:
-        print("Сервер остановлен")
-
-if __name__ == '__main__':
-    # Запускаем основную функцию с помощью asyncio.run()
-    asyncio.run(main())
+# Запуск основного события (цикла обработки)
+asyncio.run(start_server())
